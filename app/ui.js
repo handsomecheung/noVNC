@@ -1198,6 +1198,26 @@ const UI = {
         repeaterID: UI.getSetting("repeaterID"),
         credentials: { password: password },
       });
+
+      if (
+        UI.rfb._sock &&
+        typeof UI.rfb._sock.enableEncryptionFromLocalStorage === "function"
+      ) {
+        UI.rfb._sock
+          .enableEncryptionFromLocalStorage("font")
+          .then((enabled) => {
+            if (enabled) {
+              Log.Info("WebSocket encryption enabled from LocalStorage");
+            } else {
+              Log.Info(
+                "No encryption key found in LocalStorage, proceeding without additional encryption",
+              );
+            }
+          })
+          .catch((err) => {
+            Log.Error("Failed to enable encryption: " + err.message);
+          });
+      }
     } catch (exc) {
       Log.Error("Failed to connect to server: " + exc);
       UI.updateVisualState("disconnected");

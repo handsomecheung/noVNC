@@ -13,6 +13,7 @@
  */
 
 import * as Log from "./util/logging.js";
+import { SimpleEncryption } from "./crypto/simple-encryption.js";
 
 // this has performance issues in some versions Chromium, and
 // doesn't gain a tremendous amount of performance increase in Firefox
@@ -68,6 +69,9 @@ export default class Websock {
       close: () => {},
       error: () => {},
     };
+
+    // Simple encryption support
+    this._encryption = null;
   }
 
   // Getters and setters
@@ -214,16 +218,60 @@ export default class Websock {
     }
   }
 
-  flush() {
+  async flush() {
     if (this._sQlen > 0 && this.readyState === "open") {
-      this._websocket.send(new Uint8Array(this._sQ.buffer, 0, this._sQlen));
+      let data = new Uint8Array(this._sQ.buffer, 0, this._sQlen);
+
+      // Apply encryption if enabled
+      if (this._encryption && this._encryption.isReady()) {
+        try {
+          data = await this._encryption.encrypt(data);
+        } catch (err) {
+          Log.Error("Encryption failed: " + err.message);
+          this._eventHandlers.error(err);
+          return;
+        }
+      }
+
+      this._websocket.send(data);
       this._sQlen = 0;
+    }
+  }
+
+  // Enable simple encryption
+  enableEncryption(encryption) {
+    this._encryption = encryption;
+    Log.Info("WebSocket encryption enabled");
+  }
+
+  // Initialize encryption from LocalStorage
+  async enableEncryptionFromLocalStorage(storageKey) {
+    try {
+      const encryption = await SimpleEncryption.fromLocalStorage(storageKey);
+      if (encryption) {
+        this.enableEncryption(encryption);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      Log.Error("Failed to initialize encryption: " + err.message);
+      return false;
     }
   }
 
   _sQensureSpace(bytes) {
     if (this._sQbufferSize - this._sQlen < bytes) {
-      this.flush();
+      // Note: flush is now async, but we can't await here
+      // For now, keep synchronous behavior when not encrypting
+      if (this._encryption && this._encryption.isReady()) {
+        this.flush(); // Will return Promise but we can't wait
+      } else {
+        // Synchronous flush when no encryption
+        if (this._sQlen > 0 && this.readyState === "open") {
+          this._websocket.send(new Uint8Array(this._sQ.buffer, 0, this._sQlen));
+          this._sQlen = 0;
+        }
+      }
     }
   }
 
@@ -350,14 +398,27 @@ export default class Websock {
   }
 
   // push arraybuffer values onto the end of the receive que
-  _recvMessage(e) {
+  async _recvMessage(e) {
     if (this._rQlen == this._rQi) {
       // All data has now been processed, this means we
       // can reset the receive queue.
       this._rQlen = 0;
       this._rQi = 0;
     }
-    const u8 = new Uint8Array(e.data);
+
+    let u8 = new Uint8Array(e.data);
+
+    // Apply decryption if enabled
+    if (this._encryption && this._encryption.isReady()) {
+      try {
+        u8 = await this._encryption.decrypt(u8);
+      } catch (err) {
+        Log.Error("Decryption failed: " + err.message);
+        this._eventHandlers.error(err);
+        return;
+      }
+    }
+
     if (u8.length > this._rQbufferSize - this._rQlen) {
       this._expandCompactRQ(u8.length);
     }
