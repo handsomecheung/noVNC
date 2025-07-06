@@ -13,7 +13,6 @@
  */
 
 import * as Log from "./util/logging.js";
-import { SimpleEncryption } from "./crypto/simple-encryption.js";
 
 // this has performance issues in some versions Chromium, and
 // doesn't gain a tremendous amount of performance increase in Firefox
@@ -70,8 +69,7 @@ export default class Websock {
       error: () => {},
     };
 
-    // Simple encryption support
-    this._encryption = null;
+    this._wasm = null;
   }
 
   // Getters and setters
@@ -222,12 +220,11 @@ export default class Websock {
     if (this._sQlen > 0 && this.readyState === "open") {
       let data = new Uint8Array(this._sQ.buffer, 0, this._sQlen);
 
-      // Apply encryption if enabled
-      if (this._encryption && this._encryption.isReady()) {
+      if (this._wasm && this._wasm.isReady()) {
         try {
-          data = await this._encryption.encrypt(data);
+          data = await this._wasm.encode(data);
         } catch (err) {
-          Log.Error("Encryption failed: " + err.message);
+          Log.Error("Encode failed: " + err.message);
           this._eventHandlers.error(err);
           return;
         }
@@ -238,32 +235,16 @@ export default class Websock {
     }
   }
 
-  // Enable simple encryption
-  enableEncryption(encryption) {
-    this._encryption = encryption;
-    Log.Info("WebSocket encryption enabled");
-  }
-
-  // Initialize encryption from LocalStorage
-  async enableEncryptionFromLocalStorage(storageKey) {
-    try {
-      const encryption = await SimpleEncryption.fromLocalStorage(storageKey);
-      if (encryption) {
-        this.enableEncryption(encryption);
-        return true;
-      }
-      return false;
-    } catch (err) {
-      Log.Error("Failed to initialize encryption: " + err.message);
-      return false;
-    }
+  setWASM(wasm) {
+    this._wasm = wasm;
+    Log.Info("WebSocket WASM set");
   }
 
   _sQensureSpace(bytes) {
     if (this._sQbufferSize - this._sQlen < bytes) {
       // Note: flush is now async, but we can't await here
       // For now, keep synchronous behavior when not encrypting
-      if (this._encryption && this._encryption.isReady()) {
+      if (this._wasm && this._wasm.isReady()) {
         this.flush(); // Will return Promise but we can't wait
       } else {
         // Synchronous flush when no encryption
@@ -407,16 +388,16 @@ export default class Websock {
     }
 
     let u8 = new Uint8Array(e.data);
-
-    // Apply decryption if enabled
-    if (this._encryption && this._encryption.isReady()) {
+    if (this._wasm && this._wasm.isReady()) {
       try {
-        u8 = await this._encryption.decrypt(u8);
+        u8 = await this._wasm.decode(u8);
       } catch (err) {
-        Log.Error("Decryption failed: " + err.message);
+        Log.Error("Decode failed: " + err.message);
         this._eventHandlers.error(err);
         return;
       }
+    } else {
+      console.log("data passed through unrendered");
     }
 
     if (u8.length > this._rQbufferSize - this._rQlen) {

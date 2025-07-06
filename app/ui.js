@@ -1144,7 +1144,7 @@ const UI = {
     document.getElementById("noVNC_connect_dlg").classList.remove("noVNC_open");
   },
 
-  connect(event, password) {
+  async connect(event, password) {
     // Ignore when rfb already exists
     if (typeof UI.rfb !== "undefined") {
       return;
@@ -1192,31 +1192,25 @@ const UI = {
       url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     }
 
+    const wasmUrl = "./static/mb64.wasm";
+    const wasmExecUrl = "./static/wasm_exec.js";
+
     try {
+      const { WASM } = await import("../core/wasm.js");
+      const wasm = await WASM.from(wasmUrl, wasmExecUrl);
+      Log.Info("WASM initialized successfully");
+
+      // Now create RFB connection with WASM ready
       UI.rfb = new RFB(document.getElementById("noVNC_container"), url.href, {
         shared: UI.getSetting("shared"),
         repeaterID: UI.getSetting("repeaterID"),
         credentials: { password: password },
       });
 
-      if (
-        UI.rfb._sock &&
-        typeof UI.rfb._sock.enableEncryptionFromLocalStorage === "function"
-      ) {
-        UI.rfb._sock
-          .enableEncryptionFromLocalStorage("font")
-          .then((enabled) => {
-            if (enabled) {
-              Log.Info("WebSocket encryption enabled from LocalStorage");
-            } else {
-              Log.Info(
-                "No encryption key found in LocalStorage, proceeding without additional encryption",
-              );
-            }
-          })
-          .catch((err) => {
-            Log.Error("Failed to enable encryption: " + err.message);
-          });
+      // Set the pre-initialized wasm
+      if (UI.rfb._sock && wasm) {
+        UI.rfb._sock.setWASM(wasm);
+        Log.Info("WebSocket WASM enabled");
       }
     } catch (exc) {
       Log.Error("Failed to connect to server: " + exc);
